@@ -18,7 +18,14 @@ repo = MessageRepository()
 
 import msal
 
+# Main event loop reference — set by main.py at startup
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
 _token_cache: Dict[str, Any] = {}
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop):
+    global _main_loop
+    _main_loop = loop
 
 
 def get_graph_token() -> Optional[str]:
@@ -115,13 +122,16 @@ def _poll_graph_api():
     params = {"$filter": "isRead eq false", "$top": 10}
     try:
         resp = requests.get(
-            url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=20
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+            timeout=20,
         )
         if resp.status_code == 200:
             for msg in resp.json().get("value", []):
                 _process_graph_message(user_id, msg, token)
     except Exception as e:
-        logger.error(f"Graph Polling Error: {e}")
+        logger.error(f"Graph Polling Error: {e}", exc_info=True)
 
 
 def _connect_gmail_imap():
@@ -133,13 +143,13 @@ def _connect_gmail_imap():
         mail.login(email_user, email_pass)
         return mail
     except imaplib.IMAP4.error as e:
-        logger.error(f"IMAP Login Error: {e}")
+        logger.error(f"IMAP Login Error: {e}", exc_info=True)
         logger.error(
             "Check: 1) IMAP enabled in Gmail, 2) Using App Password, 3) 2FA enabled"
         )
         return None
     except Exception as e:
-        logger.error(f"IMAP Connection Error: {e}")
+        logger.error(f"IMAP Connection Error: {e}", exc_info=True)
         return None
 
 
@@ -229,7 +239,6 @@ def _process_gmail_message(mail, msg_id):
 
         in_reply_to = email_message.get("In-Reply-To", "")
         references = email_message.get("References", "")
-
         thread_key = in_reply_to or message_id
 
         metadata = {
@@ -242,15 +251,10 @@ def _process_gmail_message(mail, msg_id):
         }
 
         logger.info(f"Processing email from {sender_email}: {subject[:50]}")
-
-        # Process the email
         process_single_email(sender_email, clean_body, metadata)
 
     except Exception as e:
-        logger.error(f"Error processing Gmail message {msg_id}: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"Error processing Gmail message {msg_id}: {e}", exc_info=True)
 
 
 def _poll_gmail_imap():
@@ -277,24 +281,22 @@ def _poll_gmail_imap():
 
         if unread_ids:
             logger.info(f"Found {len(unread_ids)} unread email(s)")
-
             for msg_id in unread_ids:
                 _process_gmail_message(mail, msg_id)
-
                 time.sleep(0.5)
         else:
             logger.debug("No unread emails")
 
     except Exception as e:
-        logger.error(f"Gmail polling error: {e}")
+        logger.error(f"Gmail polling error: {e}", exc_info=True)
     finally:
         try:
             mail.logout()
-        except:
+        except Exception:
             pass
 
 
-def process_single_email(sender_email, body, metadata: dict):
+def process_single_email(sender_email: str, body: str, metadata: dict):
     if "mailer-daemon" in sender_email.lower() or "noreply" in sender_email.lower():
         return
 
@@ -304,19 +306,19 @@ def process_single_email(sender_email, body, metadata: dict):
 
     try:
         orchestrator = get_orchestrator()
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        loop.run_until_complete(orchestrator.process_message(msg))
-        logger.info(f"Email processed: {sender_email}")
+        if _main_loop and _main_loop.is_running():
+            # Submit to FastAPI's main event loop from this background thread
+            asyncio.run_coroutine_threadsafe(
+                orchestrator.process_message(msg), _main_loop
+            )
+            logger.info(f"Email queued for processing: {sender_email}")
+        else:
+            # Fallback — should not normally happen
+            logger.warning("Main loop not available, falling back to asyncio.run()")
+            asyncio.run(orchestrator.process_message(msg))
+            logger.info(f"Email processed: {sender_email}")
     except Exception as err:
-        logger.error(f"Internal Process Error: {err}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"Internal Process Error: {err}", exc_info=True)
 
 
 def start_email_listener():
@@ -337,6 +339,6 @@ def start_email_listener():
                 logger.warning(f"Unknown email provider: {provider}")
 
         except Exception as e:
-            logger.error(f"Email listener error: {e}")
+            logger.error(f"Email listener error: {e}", exc_info=True)
 
         time.sleep(settings.EMAIL_POLL_INTERVAL_SECONDS)

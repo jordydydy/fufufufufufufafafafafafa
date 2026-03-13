@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.repositories.base import Database
 from app.api.routes import router as api_router
-from app.adapters.email.listener import start_email_listener
+from app.adapters.email.listener import start_email_listener, set_main_loop
 from app.services.scheduler import run_scheduler
 import logging
 
@@ -29,7 +29,7 @@ def _setup_email_listener():
         email_thread.start()
         logger.info("Email Listener Thread Started")
     elif is_listener_running:
-        logger.warning("⚠️ Email Listener already running, skipping start.")
+        logger.warning("Email Listener already running, skipping start.")
 
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
     scheduler_task = None
 
     if settings.ENABLE_BACKGROUND_WORKER:
+        set_main_loop(asyncio.get_running_loop())
         _setup_email_listener()
         scheduler_task = asyncio.create_task(run_scheduler())
 
@@ -50,7 +51,7 @@ async def lifespan(app: FastAPI):
             try:
                 await scheduler_task
             except asyncio.CancelledError:
-                pass  # Expected during graceful shutdown
+                pass
     finally:
         Database.close()
 

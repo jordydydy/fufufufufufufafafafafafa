@@ -14,20 +14,33 @@ from app.adapters.base import BaseAdapter
 
 logger = logging.getLogger("adapters.email")
 
+
 class EmailAdapter(BaseAdapter):
-    _token_cache: Dict[str, Any] = {}
+
+    def __init__(self):
+        # Instance-level cache — avoids shared state across multiple instances
+        self._token_cache: Dict[str, Any] = {}
 
     def _convert_markdown_to_html(self, text: str) -> str:
-        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-        text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-        text = re.sub(r'_(.*?)_', r'<i>\1</i>', text)
+        text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"\*(.*?)\*", r"<i>\1</i>", text)
+        text = re.sub(r"_(.*?)_", r"<i>\1</i>", text)
         return text
 
     def _get_graph_token(self) -> Optional[str]:
-        if self._token_cache and self._token_cache.get("expires_at", 0) > time.time() + 60:
+        if (
+            self._token_cache
+            and self._token_cache.get("expires_at", 0) > time.time() + 60
+        ):
             return self._token_cache.get("access_token")
 
-        if not all([settings.AZURE_CLIENT_ID, settings.AZURE_CLIENT_SECRET, settings.AZURE_TENANT_ID]):
+        if not all(
+            [
+                settings.AZURE_CLIENT_ID,
+                settings.AZURE_CLIENT_SECRET,
+                settings.AZURE_TENANT_ID,
+            ]
+        ):
             logger.error("Azure credentials not fully configured.")
             return None
 
@@ -37,19 +50,23 @@ class EmailAdapter(BaseAdapter):
                 authority=f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}",
                 client_credential=settings.AZURE_CLIENT_SECRET,
             )
-            result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
+            result = app.acquire_token_for_client(
+                scopes=["https://graph.microsoft.com/.default"]
+            )
             if "access_token" in result:
                 self._token_cache = {
                     "access_token": result["access_token"],
-                    "expires_at": time.time() + result.get("expires_in", 3500)
+                    "expires_at": time.time() + result.get("expires_in", 3500),
                 }
                 logger.info("New Azure OAuth2 token acquired.")
                 return result["access_token"]
             else:
-                logger.error(f"Failed to acquire Graph token: {result.get('error_description')}")
+                logger.error(
+                    f"Failed to acquire Graph token: {result.get('error_description')}"
+                )
                 return None
         except Exception as e:
-            logger.error(f"Azure Auth Exception: {e}")
+            logger.error(f"Azure Auth Exception: {e}", exc_info=True)
             return None
 
     async def send_message(self, recipient_id: str, text: str, **kwargs):
@@ -57,20 +74,24 @@ class EmailAdapter(BaseAdapter):
         in_reply_to = kwargs.get("in_reply_to")
         references = kwargs.get("references")
         graph_message_id = kwargs.get("graph_message_id")
-        
+
         text = self._convert_markdown_to_html(text)
-        html_body = text.replace('\n', '<br>')
-        
-        formatted_body = (
-            f"Yth. Bapak/Ibu,<br><br>{html_body}<br><br>"
-        )
+        html_body = text.replace("\n", "<br>")
+
+        formatted_body = f"Yth. Bapak/Ibu,<br><br>{html_body}<br><br>"
 
         if settings.EMAIL_PROVIDER == "azure_oauth2":
-            return await self._send_via_graph(recipient_id, subject, formatted_body, graph_message_id)
+            return await self._send_via_graph(
+                recipient_id, subject, formatted_body, graph_message_id
+            )
         else:
-            return self._send_via_smtp(recipient_id, subject, formatted_body, in_reply_to, references)
+            return self._send_via_smtp(
+                recipient_id, subject, formatted_body, in_reply_to, references
+            )
 
-    async def _send_via_graph(self, to_email: str, subject: str, html_body: str, graph_message_id: str = None):
+    async def _send_via_graph(
+        self, to_email: str, subject: str, html_body: str, graph_message_id: str = None
+    ):
         token = self._get_graph_token()
         if not token:
             return {"sent": False, "error": "Could not acquire Azure token"}
@@ -78,12 +99,14 @@ class EmailAdapter(BaseAdapter):
         user_id = settings.AZURE_EMAIL_USER
         headers = {
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        
+
         async with httpx.AsyncClient(timeout=10) as client:
             if graph_message_id:
-                logger.info(f"Replying to existing thread using Graph ID: {graph_message_id}")
+                logger.info(
+                    f"Replying to existing thread using Graph ID: {graph_message_id}"
+                )
                 url = f"https://graph.microsoft.com/v1.0/users/{user_id}/messages/{graph_message_id}/reply"
                 payload = {"comment": html_body}
                 try:
@@ -91,10 +114,15 @@ class EmailAdapter(BaseAdapter):
                     if response.status_code == 202:
                         return {"sent": True, "method": "azure_graph_reply"}
                     else:
-                        logger.error(f"Graph Reply Failed ({response.status_code}): {response.text}")
-                        return {"sent": False, "error": f"Reply failed: {response.text}"}
+                        logger.error(
+                            f"Graph Reply Failed ({response.status_code}): {response.text}"
+                        )
+                        return {
+                            "sent": False,
+                            "error": f"Reply failed: {response.text}",
+                        }
                 except Exception as e:
-                    logger.error(f"Graph Reply Exception: {e}")
+                    logger.error(f"Graph Reply Exception: {e}", exc_info=True)
                     return {"sent": False, "error": str(e)}
 
             url = f"https://graph.microsoft.com/v1.0/users/{user_id}/sendMail"
@@ -102,9 +130,9 @@ class EmailAdapter(BaseAdapter):
                 "message": {
                     "subject": subject,
                     "body": {"contentType": "HTML", "content": html_body},
-                    "toRecipients": [{"emailAddress": {"address": to_email}}]
+                    "toRecipients": [{"emailAddress": {"address": to_email}}],
                 },
-                "saveToSentItems": "true"
+                "saveToSentItems": "true",
             }
 
             try:
@@ -113,27 +141,31 @@ class EmailAdapter(BaseAdapter):
                     logger.info(f"Email sent via Azure sendMail to {to_email}")
                     return {"sent": True, "method": "azure_graph_send"}
                 else:
-                    logger.error(f"Graph API Error {response.status_code}: {response.text}")
+                    logger.error(
+                        f"Graph API Error {response.status_code}: {response.text}"
+                    )
                     return {"sent": False, "error": response.text}
             except Exception as e:
-                logger.error(f"Graph API Exception: {e}")
+                logger.error(f"Graph API Exception: {e}", exc_info=True)
                 return {"sent": False, "error": str(e)}
 
     def _send_via_smtp(self, to_email, subject, html_body, in_reply_to, references):
         try:
             msg = MIMEMultipart()
-            msg['From'] = settings.EMAIL_USER
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            msg['Message-ID'] = make_msgid()
-            if in_reply_to: msg['In-Reply-To'] = in_reply_to
-            if references: msg['References'] = references
-            msg.attach(MIMEText(html_body, 'html'))
+            msg["From"] = settings.EMAIL_USER
+            msg["To"] = to_email
+            msg["Subject"] = subject
+            msg["Message-ID"] = make_msgid()
+            if in_reply_to:
+                msg["In-Reply-To"] = in_reply_to
+            if references:
+                msg["References"] = references
+            msg.attach(MIMEText(html_body, "html"))
             with smtplib.SMTP(settings.EMAIL_HOST, settings.EMAIL_PORT) as server:
                 server.starttls()
                 server.login(settings.EMAIL_USER, settings.EMAIL_PASS)
                 server.send_message(msg)
-            return {"sent": True, "message_id": msg['Message-ID']}
+            return {"sent": True, "message_id": msg["Message-ID"]}
         except Exception as e:
-            logger.error(f"SMTP Error: {e}")
+            logger.error(f"SMTP Error: {e}", exc_info=True)
             return {"sent": False, "error": str(e)}
