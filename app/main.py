@@ -14,47 +14,48 @@ import logging
 setup_logging()
 logger = logging.getLogger("main")
 
+
 def _setup_email_listener():
     is_listener_running = False
     for t in threading.enumerate():
         if t.name == "EmailListenerThread":
             is_listener_running = True
             break
-    
+
     if not is_listener_running and settings.EMAIL_PROVIDER != "unknown":
         email_thread = threading.Thread(
-            target=start_email_listener, 
-            name="EmailListenerThread", 
-            daemon=True
+            target=start_email_listener, name="EmailListenerThread", daemon=True
         )
         email_thread.start()
         logger.info("Email Listener Thread Started")
     elif is_listener_running:
         logger.warning("⚠️ Email Listener already running, skipping start.")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Database.initialize()
-    
+
     scheduler_task = None
-    
+
     if settings.ENABLE_BACKGROUND_WORKER:
         _setup_email_listener()
         scheduler_task = asyncio.create_task(run_scheduler())
-    
+
     yield
-    
+
     try:
         if scheduler_task:
             scheduler_task.cancel()
-            await scheduler_task
+            try:
+                await scheduler_task
+            except asyncio.CancelledError:
+                pass  # Expected during graceful shutdown
     finally:
         Database.close()
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    lifespan=lifespan
-)
+
+app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,6 +65,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
 
 @app.get("/health")
 def health():
