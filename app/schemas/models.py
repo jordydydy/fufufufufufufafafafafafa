@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 PlatformType = Literal["whatsapp", "instagram", "email", "generic"]
 
+
 class IncomingMessage(BaseModel):
     platform_unique_id: str
     query: str
@@ -12,16 +13,9 @@ class IncomingMessage(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class ChatbotResponse(BaseModel):
     success: bool
     answer: Optional[str] = None
     conversation_id: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
-
-class OutgoingMessage(BaseModel):
-    recipient_id: str
-    message: str
-    subject: Optional[str] = None
-    conversation_id: Optional[str] = None
-    thread_key: Optional[str] = None
-    platform: Optional[PlatformType] = None

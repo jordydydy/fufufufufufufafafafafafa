@@ -5,6 +5,7 @@ import logging
 
 logger = logging.getLogger("repo.conversation")
 
+
 class ConversationRepository:
     def get_active_id(self, platform_id: str, platform: str) -> Optional[str]:
         try:
@@ -18,10 +19,10 @@ class ConversationRepository:
                         ORDER BY start_timestamp DESC
                         LIMIT 1
                         """,
-                        (platform_id, platform)
+                        (platform_id, platform),
                     )
                     row = cursor.fetchone()
-                    
+
                     if row:
                         conversation_id, end_timestamp = row
                         if end_timestamp is None:
@@ -31,26 +32,6 @@ class ConversationRepository:
             logger.error(f"Error fetching active conversation: {e}")
             raise DatabaseError("Failed to fetch conversation")
 
-    def get_latest_id(self, platform_id: str, platform: str) -> Optional[str]:
-        try:
-            with Database.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        SELECT id
-                        FROM bkpm.conversations
-                        WHERE platform_unique_id = %s AND platform = %s
-                        ORDER BY start_timestamp DESC
-                        LIMIT 1
-                        """,
-                        (platform_id, platform)
-                    )
-                    row = cursor.fetchone()
-                    return str(row[0]) if row else None
-        except Exception as e:
-            logger.error(f"Error fetching latest conversation: {e}")
-            return None
-
     def get_stale_sessions(self, minutes: int = 15) -> List[Tuple[str, str, str]]:
         try:
             with Database.get_connection() as conn:
@@ -59,7 +40,7 @@ class ConversationRepository:
                         f"""
                         SELECT c.id, c.platform, c.platform_unique_id
                         FROM bkpm.conversations c
-                        WHERE c.end_timestamp IS NULL 
+                        WHERE c.end_timestamp IS NULL
                         AND c.platform IN ('whatsapp', 'instagram')
                         AND c.start_timestamp >= CURRENT_DATE
                         AND c.is_helpdesk = FALSE
@@ -87,13 +68,13 @@ class ConversationRepository:
                         WHERE id = %s
                         LIMIT 1
                         """,
-                        (conversation_id,)
+                        (conversation_id,),
                     )
                     row = cursor.fetchone()
                     return bool(row[0]) if row else False
         except Exception as e:
             logger.error(f"Error checking helpdesk status for {conversation_id}: {e}")
-            return False  
+            return False
 
     def close_session(self, conversation_id: str):
         try:
@@ -105,7 +86,7 @@ class ConversationRepository:
                         SET end_timestamp = NOW()
                         WHERE id = %s
                         """,
-                        (conversation_id,)
+                        (conversation_id,),
                     )
                     conn.commit()
                     logger.info(f"Session {conversation_id} closed successfully.")

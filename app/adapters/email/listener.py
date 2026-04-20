@@ -5,59 +5,26 @@ import asyncio
 import logging
 import requests
 from email.header import decode_header
-from typing import Dict, Any, Optional
+from typing import Optional
 
 from app.core.config import settings
 from app.adapters.email.utils import sanitize_email_body
+from app.adapters.email.sender import EmailAdapter
 from app.repositories.message import MessageRepository
 from app.api.dependencies import get_orchestrator
 from app.schemas.models import IncomingMessage
 
 logger = logging.getLogger("email.listener")
 repo = MessageRepository()
-
-import msal
+_email_adapter = EmailAdapter()
 
 # Main event loop reference — set by main.py at startup
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
-_token_cache: Dict[str, Any] = {}
 
 
 def set_main_loop(loop: asyncio.AbstractEventLoop):
     global _main_loop
     _main_loop = loop
-
-
-def get_graph_token() -> Optional[str]:
-    global _token_cache
-    if _token_cache and _token_cache.get("expires_at", 0) > time.time() + 60:
-        return _token_cache.get("access_token")
-    if not all(
-        [
-            settings.AZURE_CLIENT_ID,
-            settings.AZURE_CLIENT_SECRET,
-            settings.AZURE_TENANT_ID,
-        ]
-    ):
-        return None
-    try:
-        app = msal.ConfidentialClientApplication(
-            settings.AZURE_CLIENT_ID,
-            authority=f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}",
-            client_credential=settings.AZURE_CLIENT_SECRET,
-        )
-        result = app.acquire_token_for_client(
-            scopes=["https://graph.microsoft.com/.default"]
-        )
-        if "access_token" in result:
-            _token_cache = {
-                "access_token": result["access_token"],
-                "expires_at": time.time() + result.get("expires_in", 3500),
-            }
-            return result["access_token"]
-        return None
-    except Exception:
-        return None
 
 
 def _mark_graph_read(user_id, message_id, token):
@@ -114,7 +81,7 @@ def _extract_graph_body(msg):
 
 
 def _poll_graph_api():
-    token = get_graph_token()
+    token = _email_adapter._get_graph_token()
     if not token:
         return
     user_id = settings.AZURE_EMAIL_USER
@@ -307,13 +274,11 @@ def process_single_email(sender_email: str, body: str, metadata: dict):
     try:
         orchestrator = get_orchestrator()
         if _main_loop and _main_loop.is_running():
-            # Submit to FastAPI's main event loop from this background thread
             asyncio.run_coroutine_threadsafe(
                 orchestrator.process_message(msg), _main_loop
             )
             logger.info(f"Email queued for processing: {sender_email}")
         else:
-            # Fallback — should not normally happen
             logger.warning("Main loop not available, falling back to asyncio.run()")
             asyncio.run(orchestrator.process_message(msg))
             logger.info(f"Email processed: {sender_email}")

@@ -2,21 +2,27 @@ import os
 from typing import Optional, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
-    
+
     # App Settings
     APP_NAME: str = "Multikarnal Orchestrator"
     LOG_LEVEL: str = "INFO"
-    ENABLE_BACKGROUND_WORKER: bool = True 
+    ENABLE_BACKGROUND_WORKER: bool = True
     X_API_KEY: Optional[str] = None
 
     # Backend API Configuration
     BACKEND_API_BASE_URL: str
     BACKEND_API_KEY: str
-    
+
     # Feature Flags
     EMAIL_POLL_INTERVAL_SECONDS: int = 15
     MAX_INPUT_CHARS: int = 6000
+
+    # Platform Toggles
+    PLATFORM_WHATSAPP_ENABLED: bool = True
+    PLATFORM_INSTAGRAM_ENABLED: bool = True
+    PLATFORM_EMAIL_ENABLED: bool = True
 
     # Database
     DB_HOST: str
@@ -40,7 +46,7 @@ class Settings(BaseSettings):
     EMAIL_PORT: int = 587
     EMAIL_USER: Optional[str] = None
     EMAIL_PASS: Optional[str] = None
-    
+
     # Azure OAuth2
     AZURE_CLIENT_ID: Optional[str] = None
     AZURE_CLIENT_SECRET: Optional[str] = None
@@ -51,16 +57,26 @@ class Settings(BaseSettings):
     def BACKEND_ASK_URL(self) -> str:
         base = self.BACKEND_API_BASE_URL.rstrip("/")
         return f"{base}/api/chat/multichannel/ask"
-    
+
     @property
     def BACKEND_FEEDBACK_URL(self) -> str:
         base = self.BACKEND_API_BASE_URL.rstrip("/")
         return f"{base}/api/chat/multichannel/feedback"
-    
+
     @property
     def DATABASE_URL(self) -> str:
         return f"postgresql://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
-    model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
+    def is_platform_enabled(self, platform: str) -> bool:
+        return {
+            "whatsapp": self.PLATFORM_WHATSAPP_ENABLED,
+            "instagram": self.PLATFORM_INSTAGRAM_ENABLED,
+            "email": self.PLATFORM_EMAIL_ENABLED,
+        }.get(platform, False)
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_ignore_empty=True, extra="ignore"
+    )
+
 
 settings = Settings()
